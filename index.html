@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Multimodal Vital-Sign Monitor & ML Predictor</title>
+  <link rel="stylesheet" href="style.css" />
+  <!-- High-performance lightweight Charting via Chart.js -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+</head>
+<body>
+  <div class="app-container">
+    <!-- Header -->
+    <header class="app-header">
+      <div class="brand-title">
+        <span class="pulse-icon">🫀</span>
+        <div>
+          <h1>Multimodal Vital-Sign Monitor & AI Predictor</h1>
+          <p class="subtitle">Research Prototype: Real-Time ESP32-S3 ECG, PPG, SpO2 & Multimodal ML Inference</p>
+        </div>
+      </div>
+      <div class="header-badges">
+        <span class="badge badge-warning">Research Only • Non-Clinical</span>
+        <div id="connStatusBadge" class="badge badge-disconnected">
+          <span class="status-dot"></span> <span id="connStatusText">Disconnected</span>
+        </div>
+      </div>
+    </header>
+
+    <!-- Top Control Bar -->
+    <section class="control-panel card">
+      <div class="control-group">
+        <label for="wsUrlInput">WebSocket Stream Source:</label>
+        <div class="input-with-button">
+          <input type="text" id="wsUrlInput" value="ws://192.168.4.1:81" placeholder="ws://192.168.x.x:81 or wss://backend/ws/client" />
+          <button id="connectBtn" class="btn btn-primary">Connect</button>
+          <button id="simBtn" class="btn btn-secondary" title="Test with physiological wave simulator without hardware">Simulate Stream</button>
+        </div>
+      </div>
+
+      <div class="control-group">
+        <label for="backendUrlInput">FastAPI ML Backend URL:</label>
+        <div class="input-with-button">
+          <input type="text" id="backendUrlInput" value="http://localhost:8000" placeholder="https://your-backend.onrender.com" />
+          <button id="testBackendBtn" class="btn btn-outline">Check Health</button>
+        </div>
+      </div>
+
+      <div class="control-group network-info">
+        <span class="info-tag">Buffer: <strong id="bufferCount">0</strong> pts</span>
+        <span class="info-tag">Packets: <strong id="packetCount">0</strong></span>
+        <span class="info-tag">Latency: <strong id="rttText">-- ms</strong></span>
+      </div>
+    </section>
+
+    <!-- Mixed Content Notice (Helpful banner for GitHub Pages HTTPS) -->
+    <div id="mixedContentAlert" class="alert-box" style="display: none;">
+      <strong>⚠️ Browser Security Warning (Mixed-Content):</strong>
+      When running this page over <code>https://</code> (e.g. GitHub Pages), modern browsers block insecure <code>ws://</code> connections to local IPs.
+      Use the <strong>Cloud WSS Relay</strong> mode or run a local HTTP server.
+      <a href="https://github.com/Nirosshh/SLIIT-FYP-BloodPressure" target="_blank" class="alert-link">Learn More</a>
+    </div>
+
+    <!-- Live Vitals Metric Cards -->
+    <section class="metrics-grid">
+      <!-- Heart Rate Card -->
+      <div class="metric-card card">
+        <div class="metric-header">
+          <span class="metric-label">HEART RATE</span>
+          <span class="metric-icon beat-animation">💓</span>
+        </div>
+        <div class="metric-value-container">
+          <span class="metric-value" id="valHR">--</span>
+          <span class="metric-unit">BPM</span>
+        </div>
+        <div class="metric-footer">
+          <span class="pill pill-success" id="leadStatusPill">Leads OK</span>
+          <span class="sub-label">AD8232 / MAX30102</span>
+        </div>
+      </div>
+
+      <!-- SpO2 Card -->
+      <div class="metric-card card">
+        <div class="metric-header">
+          <span class="metric-label">OXYGEN SATURATION</span>
+          <span class="metric-icon">🩸</span>
+        </div>
+        <div class="metric-value-container">
+          <span class="metric-value" id="valSpO2">--</span>
+          <span class="metric-unit">%</span>
+        </div>
+        <div class="metric-footer">
+          <span class="pill pill-primary" id="fingerStatusPill">Finger Detected</span>
+          <span class="sub-label">MAX30102 Ratio</span>
+        </div>
+      </div>
+
+      <!-- Body Temperature Card -->
+      <div class="metric-card card">
+        <div class="metric-header">
+          <span class="metric-label">BODY TEMPERATURE</span>
+          <span class="metric-icon">🌡️</span>
+        </div>
+        <div class="metric-value-container">
+          <span class="metric-value" id="valTemp">--</span>
+          <span class="metric-unit">°C</span>
+        </div>
+        <div class="metric-footer">
+          <span class="pill pill-neutral" id="tempStatusPill">Normothermia</span>
+          <span class="sub-label">MAX30205 Clinical</span>
+        </div>
+      </div>
+
+      <!-- Signal Quality Index (SQI) Card -->
+      <div class="metric-card card">
+        <div class="metric-header">
+          <span class="metric-label">SIGNAL QUALITY (SQI)</span>
+          <span class="metric-icon">📶</span>
+        </div>
+        <div class="metric-value-container">
+          <span class="metric-value" id="valSQI">--</span>
+          <span class="metric-unit">%</span>
+        </div>
+        <div class="metric-footer">
+          <div class="sqi-bar-container">
+            <div id="sqiBar" class="sqi-bar" style="width: 0%;"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Real-Time Waveform Oscilloscopes -->
+    <main class="waveforms-container">
+      <!-- ECG Waveform -->
+      <div class="chart-card card">
+        <div class="chart-header">
+          <div class="chart-title-area">
+            <h3>ECG Lead I (AD8232)</h3>
+            <span class="chart-spec">Sampling: 200 Hz • Window: 6s • Calibrated Millivolts</span>
+          </div>
+          <div class="chart-controls">
+            <span class="lead-indicator" id="ecgLeadIndicator">● Electrodes Attached</span>
+          </div>
+        </div>
+        <div class="chart-wrapper ecg-grid">
+          <canvas id="ecgCanvas"></canvas>
+        </div>
+      </div>
+
+      <!-- PPG Waveform -->
+      <div class="chart-card card">
+        <div class="chart-header">
+          <div class="chart-title-area">
+            <h3>Photoplethysmogram PPG (MAX30102)</h3>
+            <span class="chart-spec">Sampling: 100 Hz • Pulsatile AC • Dual Red / IR</span>
+          </div>
+          <div class="chart-controls">
+            <label class="checkbox-inline">
+              <input type="checkbox" id="showIRToggle" checked /> Show IR Channel
+            </label>
+          </div>
+        </div>
+        <div class="chart-wrapper ppg-grid">
+          <canvas id="ppgCanvas"></canvas>
+        </div>
+      </div>
+    </main>
+
+    <!-- Bottom Panels: Experiment Recorder & AI Inference -->
+    <div class="bottom-grid">
+      <!-- Experiment Recording Panel -->
+      <section class="card recorder-panel">
+        <div class="panel-header">
+          <h3>📁 Experiment Data Collection</h3>
+          <span class="recording-badge" id="recordingBadge" style="display: none;">● RECORDING</span>
+        </div>
+        <p class="panel-desc">Record high-resolution raw biomedical time series for clinical ML model validation and offline training.</p>
+        
+        <div class="recorder-stats">
+          <div>Duration: <strong id="recDuration">00:00</strong></div>
+          <div>Samples: <strong id="recSamples">0</strong></div>
+        </div>
+
+        <div class="recorder-actions">
+          <button id="startRecBtn" class="btn btn-record">Start Recording</button>
+          <button id="stopRecBtn" class="btn btn-secondary" disabled>Stop Recording</button>
+          <button id="downloadCsvBtn" class="btn btn-outline" disabled>Download CSV</button>
+          <button id="downloadJsonBtn" class="btn btn-outline" disabled>Download JSON</button>
+        </div>
+      </section>
+
+      <!-- AI Inference & Research Prediction Panel -->
+      <section class="card ml-panel">
+        <div class="panel-header">
+          <h3>🧠 Multimodal AI Research Inference</h3>
+          <span class="ai-status" id="aiStatusText">Model Ready</span>
+        </div>
+        <p class="panel-desc">Runs 1D-CNN multimodal inference on current 5s physiological window (ECG + PPG + SpO2 + Temp).</p>
+
+        <div class="ml-action-row">
+          <button id="runInferenceBtn" class="btn btn-ai">Run Inference (5s Window)</button>
+          <label class="checkbox-inline">
+            <input type="checkbox" id="autoInferenceToggle" /> Auto-predict every 5s
+          </label>
+        </div>
+
+        <div class="ml-results-grid">
+          <!-- Blood Pressure Card -->
+          <div class="ml-result-box">
+            <span class="ml-box-title">PREDICTED BLOOD PRESSURE (PTT/1D-CNN)</span>
+            <div class="ml-box-value">
+              <span id="predBP">-- / --</span> <span class="unit">mmHg</span>
+            </div>
+            <span class="ml-category" id="predBPCategory">Awaiting Inference</span>
+          </div>
+
+          <!-- Arrhythmia Risk Card -->
+          <div class="ml-result-box">
+            <span class="ml-box-title">ARRHYTHMIA RISK / RHYTHM</span>
+            <div class="ml-box-value" id="predArrhythmia">--</div>
+            <span class="ml-category" id="predArrhythmiaConfidence">Confidence: --%</span>
+          </div>
+
+          <!-- Pulse Transit Time (PTT) -->
+          <div class="ml-result-box">
+            <span class="ml-box-title">PULSE TRANSIT TIME (PTT)</span>
+            <div class="ml-box-value">
+              <span id="calcPTT">--</span> <span class="unit">ms</span>
+            </div>
+            <span class="ml-category">ECG R-Peak to PPG Foot</span>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <!-- Footer -->
+    <footer class="app-footer">
+      <p>Real-Time Multimodal Vital-Sign Monitoring & Prediction System • ESP32-S3 + MAX30102 + AD8232 + MAX30205</p>
+      <p class="disclaimer">
+        Disclaimer: This software and hardware design is an academic research and engineering prototype. It is not approved by the FDA or CE as a medical diagnostic device. Do not use for clinical diagnosis or treatment.
+      </p>
+    </footer>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
